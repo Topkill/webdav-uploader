@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -38,6 +37,9 @@ class MainActivity : ComponentActivity() {
             val config by vm.config.collectAsStateWithLifecycle()
             val upload by UploadService.state.collectAsStateWithLifecycle()
             val probeMsg by vm.probeMessage.collectAsStateWithLifecycle()
+            val history by vm.history.collectAsStateWithLifecycle()
+            val historyMax by vm.historyMaxItems.collectAsStateWithLifecycle()
+            val historyMsg by vm.historyMessage.collectAsStateWithLifecycle()
 
             val pickFiles = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenMultipleDocuments()
@@ -63,6 +65,9 @@ class MainActivity : ComponentActivity() {
                         config = config,
                         upload = upload,
                         probeMessage = probeMsg,
+                        history = history,
+                        historyMaxItems = historyMax,
+                        historyMessage = historyMsg,
                         onConfigChange = vm::updateLocal,
                         onSave = vm::save,
                         onProbe = vm::probe,
@@ -70,12 +75,15 @@ class MainActivity : ComponentActivity() {
                             pickFiles.launch(arrayOf("*/*"))
                         },
                         onCancel = { UploadService.stop(this) },
+                        onSetHistoryMaxItems = vm::setHistoryMaxItems,
+                        onAddHistory = { fileName, fileSize, remotePath, status, message ->
+                            vm.addHistory(fileName, fileSize, remotePath, status, message)
+                        },
+                        onUpdateHistory = vm::updateHistory,
+                        onDeleteHistory = vm::deleteHistory,
+                        onClearHistory = vm::clearHistory,
                     )
                 }
-            }
-
-            LaunchedEffect(Unit) {
-                // no-op keep composition for lifecycle collector
             }
         }
     }
@@ -122,4 +130,3 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-

@@ -16,7 +16,10 @@ import android.provider.OpenableColumns
 import androidx.core.app.NotificationCompat
 import com.webdav.uploader.MainActivity
 import com.webdav.uploader.R
+import com.webdav.uploader.data.HistoryRepository
 import com.webdav.uploader.data.SettingsRepository
+import com.webdav.uploader.data.UploadHistoryRecord
+import com.webdav.uploader.data.UploadHistoryStatus
 import com.webdav.uploader.webdav.WebDavClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.cancellation.CancellationException
 
 data class UploadItem(
     val uri: String,
@@ -96,6 +100,7 @@ class UploadService : Service() {
         job = scope.launch {
             queueMutex.withLock {
                 val settings = SettingsRepository(applicationContext)
+                val historyRepo = HistoryRepository(applicationContext)
                 val config = settings.configFlow.first()
                 val items = uris.mapNotNull { uri -> resolveItem(uri) }
                 if (items.isEmpty()) {
@@ -127,6 +132,7 @@ class UploadService : Service() {
                 items.forEachIndexed { index, item ->
                     val remotePath = if (remoteDir.isBlank()) item.displayName
                     else "$remoteDir/${item.displayName}"
+                    val startedAt = System.currentTimeMillis()
 
                     log = appendLog(log, "[${index + 1}/${items.size}] 上传 ${item.displayName}")
                     _state.value = _state.value.copy(
@@ -144,45 +150,88 @@ class UploadService : Service() {
 
                     val uri = Uri.parse(item.uri)
                     val contentType = contentResolver.getType(uri)
-                    val result = contentResolver.openInputStream(uri).use { input ->
-                        if (input == null) Result.failure(IllegalStateException("无法打开文件流"))
-                        else client.upload(
-                            remotePath = remotePath,
-                            contentLength = item.size,
-                            contentType = contentType,
-                            input = input,
-                        ) { progress ->
-                            _state.value = _state.value.copy(
-                                bytesSent = progress.bytesSent,
-                                totalBytes = progress.totalBytes,
-                                phase = if (progress.bytesSent >= progress.totalBytes && progress.totalBytes > 0) {
-                                    "等待服务端完成(crypt/网盘)..."
-                                } else {
-                                    "发送数据"
-                                },
+                    try {
+                        val result = contentResolver.openInputStream(uri).use { input ->
+                            if (input == null) Result.failure(IllegalStateException("无法打开文件流"))
+                            else client.upload(
+                                remotePath = remotePath,
+                                contentLength = item.size,
+                                contentType = contentType,
+                                input = input,
+                            ) { progress ->
+                                _state.value = _state.value.copy(
+                                    bytesSent = progress.bytesSent,
+                                    totalBytes = progress.totalBytes,
+                                    phase = if (progress.bytesSent >= progress.totalBytes && progress.totalBytes > 0) {
+                                        "等待服务端完成(crypt/网盘)..."
+                                    } else {
+                                        "发送数据"
+                                    },
+                                )
+                                updateNotification(
+                                    title = if (progress.bytesSent >= progress.totalBytes && progress.totalBytes > 0) {
+                                        "等待完成: ${item.displayName}"
+                                    } else {
+                                        "上传: ${item.displayName}"
+                                    },
+                                    bytesSent = progress.bytesSent,
+                                    totalBytes = progress.totalBytes,
+                                )
+                            }
+                        }
+
+                        val finishedAt = System.currentTimeMillis()
+                        result.onSuccess {
+                            log = appendLog(log, "成功: ${item.displayName}")
+                            _state.value = _state.value.copy(phase = "成功", log = log)
+                            historyRepo.add(
+                                UploadHistoryRecord(
+                                    fileName = item.displayName,
+                                    fileSize = item.size,
+                                    remotePath = remotePath,
+                                    baseUrl = config.baseUrl,
+                                    status = UploadHistoryStatus.SUCCESS,
+                                    message = "上传成功",
+                                    startedAt = startedAt,
+                                    finishedAt = finishedAt,
+                                ),
                             )
-                            updateNotification(
-                                title = if (progress.bytesSent >= progress.totalBytes && progress.totalBytes > 0) {
-                                    "等待完成: ${item.displayName}"
-                                } else {
-                                    "上传: ${item.displayName}"
-                                },
-                                bytesSent = progress.bytesSent,
-                                totalBytes = progress.totalBytes,
+                        }.onFailure { e ->
+                            log = appendLog(log, "失败: ${item.displayName} -> ${e.message}")
+                            _state.value = _state.value.copy(
+                                phase = "失败",
+                                log = log,
+                                lastError = e.message,
+                            )
+                            historyRepo.add(
+                                UploadHistoryRecord(
+                                    fileName = item.displayName,
+                                    fileSize = item.size,
+                                    remotePath = remotePath,
+                                    baseUrl = config.baseUrl,
+                                    status = UploadHistoryStatus.FAILED,
+                                    message = e.message.orEmpty().ifBlank { "上传失败" },
+                                    startedAt = startedAt,
+                                    finishedAt = finishedAt,
+                                ),
                             )
                         }
-                    }
-
-                    result.onSuccess {
-                        log = appendLog(log, "成功: ${item.displayName}")
-                        _state.value = _state.value.copy(phase = "成功", log = log)
-                    }.onFailure { e ->
-                        log = appendLog(log, "失败: ${item.displayName} -> ${e.message}")
-                        _state.value = _state.value.copy(
-                            phase = "失败",
-                            log = log,
-                            lastError = e.message,
+                    } catch (e: CancellationException) {
+                        val finishedAt = System.currentTimeMillis()
+                        log = appendLog(log, "取消: ${item.displayName}")
+                        historyRepo.add(
+                            UploadHistoryRecord(
+                                fileName = item.displayName,
+                                fileSize = item.size,
+                                remotePath = remotePath,
+                                baseUrl = config.baseUrl,
+                                status = UploadHistoryStatus.CANCELLED,
+                                message = "用户取消",
+                                startedAt = startedAt,
+                                finishedAt = finishedAt,
+                            ),
                         )
+                        throw e
                     }
                 }
 
@@ -349,4 +398,3 @@ private fun formatSize(bytes: Long): String {
     val gb = mb / 1024.0
     return String.format("%.2f GB", gb)
 }
-

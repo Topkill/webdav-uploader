@@ -117,3 +117,9 @@ MIT
   - `app-release-unsigned`：未签名 release APK
 - 下载：GitHub → Actions → 选中一次成功的 run → Artifacts
 
+## 上传历史
+
+- 成功 / 失败 / 取消都会**自动落盘**
+- 支持：查看、手动新增、编辑、删除、清空
+- 可设置历史上限（默认 100，范围 10–500），超出自动丢弃最旧记录
+- 存储：DataStore（`upload_history`），杀进程后仍在
