@@ -4,8 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.webdav.uploader.data.HistoryRepository
+import com.webdav.uploader.data.SessionRepository
 import com.webdav.uploader.data.SettingsRepository
 import com.webdav.uploader.data.UploadHistoryRecord
+import com.webdav.uploader.data.UploadSession
+import com.webdav.uploader.data.UploadSessionSummary
 import com.webdav.uploader.data.WebDavConfig
 import com.webdav.uploader.keepalive.KeepAliveHelper
 import com.webdav.uploader.keepalive.KeepAliveStatus
@@ -21,16 +24,18 @@ sealed class AppScreen {
     data object Home : AppScreen()
     data object Settings : AppScreen()
     data object History : AppScreen()
+    data object Sessions : AppScreen()
+    data class SessionDetail(val sessionId: String) : AppScreen()
 }
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsRepo = SettingsRepository(app)
     private val historyRepo = HistoryRepository(app)
+    private val sessionRepo = SessionRepository(app)
 
     private val _config = MutableStateFlow(WebDavConfig())
     val config: StateFlow<WebDavConfig> = _config.asStateFlow()
 
-    /** 已落盘的配置，供主页展示/上传读取一致性提示 */
     val savedConfig: StateFlow<WebDavConfig> = settingsRepo.configFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WebDavConfig())
 
@@ -41,6 +46,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val settingsMessage: StateFlow<String?> = _settingsMessage.asStateFlow()
 
     private val _historyMessage = MutableStateFlow<String?>(null)
+    val historyMessage: StateFlow<String?> = _historyMessage.asStateFlow()
 
     private val _keepAliveStatus = MutableStateFlow(
         KeepAliveStatus(
@@ -50,7 +56,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ),
     )
     val keepAliveStatus: StateFlow<KeepAliveStatus> = _keepAliveStatus.asStateFlow()
-    val historyMessage: StateFlow<String?> = _historyMessage.asStateFlow()
 
     private val _screen = MutableStateFlow<AppScreen>(AppScreen.Home)
     val screen: StateFlow<AppScreen> = _screen.asStateFlow()
@@ -65,6 +70,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             HistoryRepository.DEFAULT_MAX_ITEMS,
         )
 
+    val sessions: StateFlow<List<UploadSessionSummary>> = sessionRepo.sessions
+
+    private val _sessionDetail = MutableStateFlow<UploadSession?>(null)
+    val sessionDetail: StateFlow<UploadSession?> = _sessionDetail.asStateFlow()
+
     private val _settingsDraft = MutableStateFlow(WebDavConfig())
     val settingsDraft: StateFlow<WebDavConfig> = _settingsDraft.asStateFlow()
 
@@ -75,7 +85,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             settingsRepo.configFlow.collect { saved ->
                 _config.value = saved
-                // 不在设置页编辑时，同步草稿
                 if (_screen.value !is AppScreen.Settings) {
                     _settingsDraft.value = saved
                 }
@@ -88,18 +97,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        viewModelScope.launch {
+            sessionRepo.refresh()
+        }
     }
 
     fun navigate(screen: AppScreen) {
-        if (screen is AppScreen.Settings) {
-            // 进入设置时用已落盘配置填充草稿
-            _settingsDraft.value = _config.value
-            _historyMaxDraft.value = historyMaxItems.value
-            _settingsMessage.value = null
-            _probeMessage.value = null
-        }
-        if (screen is AppScreen.History) {
-            _historyMessage.value = null
+        when (screen) {
+            is AppScreen.Settings -> {
+                _settingsDraft.value = _config.value
+                _historyMaxDraft.value = historyMaxItems.value
+                _settingsMessage.value = null
+                _probeMessage.value = null
+            }
+            is AppScreen.History -> {
+                _historyMessage.value = null
+            }
+            is AppScreen.Sessions -> {
+                viewModelScope.launch { sessionRepo.refresh() }
+            }
+            is AppScreen.SessionDetail -> {
+                viewModelScope.launch {
+                    _sessionDetail.value = sessionRepo.getSession(screen.sessionId)
+                }
+            }
+            else -> Unit
         }
         _screen.value = screen
     }
@@ -115,7 +137,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** 连接配置 + 历史上限 一并落盘 */
     fun saveSettings() {
         viewModelScope.launch {
             val draft = _settingsDraft.value
@@ -132,7 +153,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun probe() {
         viewModelScope.launch {
             _probeMessage.value = "正在测试连接..."
-            // 先落盘再测，保证用的是当前输入
             settingsRepo.save(_settingsDraft.value)
             historyRepo.setMaxItems(_historyMaxDraft.value)
             _config.value = _settingsDraft.value
@@ -141,7 +161,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = { it },
                 onFailure = { "连接失败: ${it.message}" },
             )
-            _settingsMessage.value = "连接配置已落盘"
+            _settingsMessage.value = "连接配置已保存"
         }
     }
 
@@ -163,14 +183,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refreshKeepAliveStatus() {
-        _keepAliveStatus.value = KeepAliveHelper.status(getApplication())
-    }
-
     fun clearHistory() {
         viewModelScope.launch {
             historyRepo.clear()
             _historyMessage.value = "历史已清空"
         }
+    }
+
+    fun deleteSession(id: String) {
+        viewModelScope.launch {
+            sessionRepo.deleteSession(id)
+            if ((_screen.value as? AppScreen.SessionDetail)?.sessionId == id) {
+                navigate(AppScreen.Sessions)
+            }
+        }
+    }
+
+    fun clearSessions() {
+        viewModelScope.launch {
+            sessionRepo.clearAllSessions()
+            _sessionDetail.value = null
+        }
+    }
+
+    fun refreshKeepAliveStatus() {
+        _keepAliveStatus.value = KeepAliveHelper.status(getApplication())
     }
 }

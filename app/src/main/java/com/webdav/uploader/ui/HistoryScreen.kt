@@ -137,7 +137,7 @@ fun HistoryScreen(
         ) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "共 ${history.size}/$historyMaxItems · 成功 $successCount · 失败 $failedCount · 取消 $cancelledCount",
+                "全局最近 ${history.size}/$historyMaxItems · 成功 $successCount · 失败 $failedCount · 取消 $cancelledCount（完整批次请看「批次结果」）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

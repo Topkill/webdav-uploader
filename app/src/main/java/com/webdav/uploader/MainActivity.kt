@@ -26,6 +26,8 @@ import com.webdav.uploader.ui.AppScreen
 import com.webdav.uploader.ui.HistoryScreen
 import com.webdav.uploader.ui.MainScreen
 import com.webdav.uploader.ui.MainViewModel
+import com.webdav.uploader.ui.SessionDetailScreen
+import com.webdav.uploader.ui.SessionsScreen
 import com.webdav.uploader.ui.SettingsScreen
 import com.webdav.uploader.upload.UploadService
 
@@ -56,24 +58,28 @@ class MainActivity : ComponentActivity() {
             val historyMax by vm.historyMaxItems.collectAsStateWithLifecycle()
             val historyMsg by vm.historyMessage.collectAsStateWithLifecycle()
             val keepAliveStatus by vm.keepAliveStatus.collectAsStateWithLifecycle()
+            val sessions by vm.sessions.collectAsStateWithLifecycle()
+            val sessionDetail by vm.sessionDetail.collectAsStateWithLifecycle()
 
             val pickFiles = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenMultipleDocuments(),
             ) { uris: List<Uri> ->
                 if (uris.isNotEmpty()) {
-                    // 大量文件时不要 takePersistableUriPermission，会显著增加内存与系统开销
-                    // 上传期间通过 Intent FLAG + ClipData 传递读权限即可
+                    // 完整列表放进程内队列，不再依赖 ClipData 前 500
                     UploadService.start(this, uris)
                 }
             }
 
             BackHandler(enabled = screen !is AppScreen.Home) {
-                vm.navigate(AppScreen.Home)
+                when (screen) {
+                    is AppScreen.SessionDetail -> vm.navigate(AppScreen.Sessions)
+                    else -> vm.navigate(AppScreen.Home)
+                }
             }
 
             MaterialTheme(colorScheme = lightColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    when (screen) {
+                    when (val s = screen) {
                         AppScreen.Home -> MainScreen(
                             config = config,
                             upload = upload,
@@ -81,6 +87,7 @@ class MainActivity : ComponentActivity() {
                             onCancel = { UploadService.stop(this) },
                             onOpenSettings = { vm.navigate(AppScreen.Settings) },
                             onOpenHistory = { vm.navigate(AppScreen.History) },
+                            onOpenSessions = { vm.navigate(AppScreen.Sessions) },
                         )
                         AppScreen.Settings -> SettingsScreen(
                             draft = settingsDraft,
@@ -93,7 +100,6 @@ class MainActivity : ComponentActivity() {
                             onSave = vm::saveSettings,
                             onProbe = vm::probe,
                             onApplyKeepAlive = {
-                                // 先保存勾选，再按勾选项申请系统权限/跳转
                                 vm.saveSettings()
                                 KeepAliveHelper.applyEnabledOptions(this, vm.settingsDraft.value)
                                 if (vm.settingsDraft.value.keepAliveForegroundNotification) {
@@ -114,6 +120,18 @@ class MainActivity : ComponentActivity() {
                             onDeleteIds = vm::deleteHistoryIds,
                             onClear = vm::clearHistory,
                             onBack = { vm.navigate(AppScreen.Home) },
+                        )
+                        AppScreen.Sessions -> SessionsScreen(
+                            sessions = sessions,
+                            onOpen = { id -> vm.navigate(AppScreen.SessionDetail(id)) },
+                            onDelete = vm::deleteSession,
+                            onClear = vm::clearSessions,
+                            onBack = { vm.navigate(AppScreen.Home) },
+                        )
+                        is AppScreen.SessionDetail -> SessionDetailScreen(
+                            session = sessionDetail,
+                            onBack = { vm.navigate(AppScreen.Sessions) },
+                            onDeleteSession = vm::deleteSession,
                         )
                     }
                 }
@@ -162,7 +180,7 @@ class MainActivity : ComponentActivity() {
                 this,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
-            if (!granted && (force || true)) {
+            if (!granted) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }

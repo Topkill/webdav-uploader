@@ -46,6 +46,7 @@ fun MainScreen(
     onCancel: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenSessions: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -73,6 +74,13 @@ fun MainScreen(
                             onClick = {
                                 menuExpanded = false
                                 onOpenHistory()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("批次结果") },
+                            onClick = {
+                                menuExpanded = false
+                                onOpenSessions()
                             },
                         )
                     }
@@ -145,6 +153,9 @@ fun StatusCard(upload: UploadUiState) {
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("状态: ${upload.phase}", style = MaterialTheme.typography.titleSmall)
+            if (upload.totalCount > 0 && (upload.successCount + upload.failedCount + upload.cancelledCount) > 0) {
+                Text("累计: 成功 ${upload.successCount} / 失败 ${upload.failedCount} / 取消 ${upload.cancelledCount}")
+            }
             if (upload.totalCount > 0) {
                 Text("文件: ${upload.currentIndex}/${upload.totalCount}  ${upload.currentName}")
             }
