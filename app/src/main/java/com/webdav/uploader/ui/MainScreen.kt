@@ -88,7 +88,7 @@ fun MainScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("当前连接（已落盘）", style = MaterialTheme.typography.titleMedium)
+            Text("当前连接", style = MaterialTheme.typography.titleMedium)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -104,7 +104,7 @@ fun MainScreen(
                     Text("远端目录: /${config.remoteDir.ifBlank { "" }}")
                     Text("读超时: ${config.readTimeoutSec}s")
                     Text(
-                        "可在右上角「更多 → 设置」修改，保存后落盘。",
+                        "可在右上角「更多 → 设置」修改。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

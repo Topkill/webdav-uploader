@@ -84,6 +84,15 @@ class HistoryRepository(private val context: Context) {
         return removed
     }
 
+    suspend fun deleteAll(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        val idSet = ids.toSet()
+        context.historyDataStore.edit { prefs ->
+            val current = parse(prefs[Keys.itemsJson].orEmpty())
+            prefs[Keys.itemsJson] = toJson(current.filterNot { it.id in idSet })
+        }
+    }
+
     suspend fun clear() {
         context.historyDataStore.edit { prefs ->
             prefs[Keys.itemsJson] = "[]"

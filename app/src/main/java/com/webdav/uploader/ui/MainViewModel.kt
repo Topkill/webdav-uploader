@@ -141,6 +141,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun deleteHistoryIds(ids: Collection<String>) {
+        viewModelScope.launch {
+            if (ids.isEmpty()) {
+                _historyMessage.value = "未选择任何记录"
+                return@launch
+            }
+            historyRepo.deleteAll(ids)
+            _historyMessage.value = "已删除 ${ids.size} 条"
+        }
+    }
+
     fun clearHistory() {
         viewModelScope.launch {
             historyRepo.clear()

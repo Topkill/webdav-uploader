@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
                             historyMaxItems = historyMax,
                             historyMessage = historyMsg,
                             onDelete = vm::deleteHistory,
+                            onDeleteIds = vm::deleteHistoryIds,
                             onClear = vm::clearHistory,
                             onBack = { vm.navigate(AppScreen.Home) },
                         )
