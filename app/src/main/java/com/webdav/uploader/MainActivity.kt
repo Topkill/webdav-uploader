@@ -9,9 +9,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.webdav.uploader.keepalive.KeepAliveHelper
 import com.webdav.uploader.ui.AppScreen
 import com.webdav.uploader.ui.HistoryScreen
 import com.webdav.uploader.ui.MainScreen
@@ -31,11 +32,17 @@ import com.webdav.uploader.upload.UploadService
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            vm.refreshKeepAliveStatus()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
         handleShareIntent(intent)
+        vm.refreshKeepAliveStatus()
 
         setContent {
             val screen by vm.screen.collectAsStateWithLifecycle()
@@ -48,21 +55,14 @@ class MainActivity : ComponentActivity() {
             val history by vm.history.collectAsStateWithLifecycle()
             val historyMax by vm.historyMaxItems.collectAsStateWithLifecycle()
             val historyMsg by vm.historyMessage.collectAsStateWithLifecycle()
+            val keepAliveStatus by vm.keepAliveStatus.collectAsStateWithLifecycle()
 
             val pickFiles = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenMultipleDocuments(),
             ) { uris: List<Uri> ->
                 if (uris.isNotEmpty()) {
-                    uris.forEach { uri ->
-                        try {
-                            contentResolver.takePersistableUriPermission(
-                                uri,
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                            )
-                        } catch (_: SecurityException) {
-                            // ignore
-                        }
-                    }
+                    // 大量文件时不要 takePersistableUriPermission，会显著增加内存与系统开销
+                    // 上传期间通过 Intent FLAG + ClipData 传递读权限即可
                     UploadService.start(this, uris)
                 }
             }
@@ -87,10 +87,23 @@ class MainActivity : ComponentActivity() {
                             historyMaxDraft = historyMaxDraft,
                             settingsMessage = settingsMessage,
                             probeMessage = probeMsg,
+                            keepAliveStatus = keepAliveStatus,
                             onDraftChange = vm::updateSettingsDraft,
                             onHistoryMaxChange = vm::updateHistoryMaxDraft,
                             onSave = vm::saveSettings,
                             onProbe = vm::probe,
+                            onApplyKeepAlive = {
+                                // 先保存勾选，再按勾选项申请系统权限/跳转
+                                vm.saveSettings()
+                                KeepAliveHelper.applyEnabledOptions(this, vm.settingsDraft.value)
+                                if (vm.settingsDraft.value.keepAliveForegroundNotification) {
+                                    maybeRequestNotificationPermission(force = true)
+                                }
+                                vm.refreshKeepAliveStatus()
+                            },
+                            onRequestNotificationPermission = {
+                                maybeRequestNotificationPermission(force = true)
+                            },
                             onBack = { vm.navigate(AppScreen.Home) },
                         )
                         AppScreen.History -> HistoryScreen(
@@ -106,6 +119,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        vm.refreshKeepAliveStatus()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -138,15 +156,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun maybeRequestNotificationPermission() {
+    private fun maybeRequestNotificationPermission(force: Boolean = false) {
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            if (!granted && (force || true)) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+        vm.refreshKeepAliveStatus()
     }
 }

@@ -7,6 +7,8 @@ import com.webdav.uploader.data.HistoryRepository
 import com.webdav.uploader.data.SettingsRepository
 import com.webdav.uploader.data.UploadHistoryRecord
 import com.webdav.uploader.data.WebDavConfig
+import com.webdav.uploader.keepalive.KeepAliveHelper
+import com.webdav.uploader.keepalive.KeepAliveStatus
 import com.webdav.uploader.webdav.WebDavClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -39,6 +41,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val settingsMessage: StateFlow<String?> = _settingsMessage.asStateFlow()
 
     private val _historyMessage = MutableStateFlow<String?>(null)
+
+    private val _keepAliveStatus = MutableStateFlow(
+        KeepAliveStatus(
+            batteryOptimizationIgnored = false,
+            notificationGranted = false,
+            canRequestBatteryOptimization = true,
+        ),
+    )
+    val keepAliveStatus: StateFlow<KeepAliveStatus> = _keepAliveStatus.asStateFlow()
     val historyMessage: StateFlow<String?> = _historyMessage.asStateFlow()
 
     private val _screen = MutableStateFlow<AppScreen>(AppScreen.Home)
@@ -114,7 +125,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 baseUrl = draft.baseUrl.trim(),
                 remoteDir = draft.remoteDir.trim().trim('/'),
             )
-            _settingsMessage.value = "设置已保存到本地"
+            _settingsMessage.value = "设置已保存（含保活勾选）"
         }
     }
 
@@ -150,6 +161,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             historyRepo.deleteAll(ids)
             _historyMessage.value = "已删除 ${ids.size} 条"
         }
+    }
+
+    fun refreshKeepAliveStatus() {
+        _keepAliveStatus.value = KeepAliveHelper.status(getApplication())
     }
 
     fun clearHistory() {

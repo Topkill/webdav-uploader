@@ -14,4 +14,10 @@ data class WebDavConfig(
     val callTimeoutSec: Long = 0,
     /** 远程目录，相对 WebDAV 根，如 crypt 或 加密盘/手机备份 */
     val remoteDir: String = "crypt",
+    /** 保活：申请忽略电池优化 */
+    val keepAliveBatteryOptimization: Boolean = true,
+    /** 保活：引导设置为「无限制」后台耗电 */
+    val keepAliveUnrestrictedBattery: Boolean = false,
+    /** 保活：上传时使用前台通知服务 */
+    val keepAliveForegroundNotification: Boolean = true,
 )

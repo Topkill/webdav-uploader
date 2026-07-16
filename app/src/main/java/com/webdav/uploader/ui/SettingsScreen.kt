@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,12 +25,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.webdav.uploader.data.HistoryRepository
 import com.webdav.uploader.data.WebDavConfig
+import com.webdav.uploader.keepalive.KeepAliveStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,10 +41,13 @@ fun SettingsScreen(
     historyMaxDraft: Int,
     settingsMessage: String?,
     probeMessage: String?,
+    keepAliveStatus: KeepAliveStatus,
     onDraftChange: ((WebDavConfig) -> WebDavConfig) -> Unit,
     onHistoryMaxChange: (Int) -> Unit,
     onSave: () -> Unit,
     onProbe: () -> Unit,
+    onApplyKeepAlive: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -66,7 +72,7 @@ fun SettingsScreen(
         ) {
             Text("连接配置", style = MaterialTheme.typography.titleMedium)
             Text(
-                "以下配置会落盘保存，重启 App 后仍然有效。上传使用已保存配置。",
+                "以下配置会保存到本地，重启后仍然有效。上传使用已保存配置。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -149,6 +155,61 @@ fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
 
+            Text("保活设置", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "可只开一项，也可全部开启。长传/锁屏时建议至少打开「前台通知」+「电池优化白名单」。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            KeepAliveCheckRow(
+                title = "申请电池优化白名单",
+                subtitle = if (keepAliveStatus.batteryOptimizationIgnored) {
+                    "当前状态：已忽略电池优化"
+                } else {
+                    "当前状态：仍受电池优化限制"
+                },
+                checked = draft.keepAliveBatteryOptimization,
+                onCheckedChange = { checked ->
+                    onDraftChange { it.copy(keepAliveBatteryOptimization = checked) }
+                },
+            )
+            KeepAliveCheckRow(
+                title = "后台耗电无限制（引导）",
+                subtitle = "打开系统应用详情，请手动设为「无限制/不限制」",
+                checked = draft.keepAliveUnrestrictedBattery,
+                onCheckedChange = { checked ->
+                    onDraftChange { it.copy(keepAliveUnrestrictedBattery = checked) }
+                },
+            )
+            KeepAliveCheckRow(
+                title = "前台通知保活",
+                subtitle = if (keepAliveStatus.notificationGranted) {
+                    "当前状态：通知权限已授予；上传时显示前台通知"
+                } else {
+                    "当前状态：通知权限未授予，前台服务可能被限制"
+                },
+                checked = draft.keepAliveForegroundNotification,
+                onCheckedChange = { checked ->
+                    onDraftChange { it.copy(keepAliveForegroundNotification = checked) }
+                },
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onApplyKeepAlive,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("应用已勾选保活")
+                }
+                OutlinedButton(
+                    onClick = onRequestNotificationPermission,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("申请通知权限")
+                }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSave, modifier = Modifier.weight(1f)) {
                     Text("保存设置")
@@ -165,6 +226,29 @@ fun SettingsScreen(
                 Text(probeMessage)
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun KeepAliveCheckRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

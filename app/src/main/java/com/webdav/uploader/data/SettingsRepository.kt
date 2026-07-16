@@ -1,6 +1,7 @@
 package com.webdav.uploader.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -20,6 +21,9 @@ class SettingsRepository(private val context: Context) {
         val readTimeoutSec = longPreferencesKey("read_timeout_sec")
         val callTimeoutSec = longPreferencesKey("call_timeout_sec")
         val remoteDir = stringPreferencesKey("remote_dir")
+        val keepAliveBatteryOptimization = booleanPreferencesKey("keep_alive_battery_opt")
+        val keepAliveUnrestrictedBattery = booleanPreferencesKey("keep_alive_unrestricted")
+        val keepAliveForegroundNotification = booleanPreferencesKey("keep_alive_foreground")
     }
 
     val configFlow: Flow<WebDavConfig> = context.dataStore.data.map { prefs ->
@@ -32,6 +36,9 @@ class SettingsRepository(private val context: Context) {
             readTimeoutSec = prefs[Keys.readTimeoutSec] ?: 1800L,
             callTimeoutSec = prefs[Keys.callTimeoutSec] ?: 0L,
             remoteDir = prefs[Keys.remoteDir] ?: "crypt",
+            keepAliveBatteryOptimization = prefs[Keys.keepAliveBatteryOptimization] ?: true,
+            keepAliveUnrestrictedBattery = prefs[Keys.keepAliveUnrestrictedBattery] ?: false,
+            keepAliveForegroundNotification = prefs[Keys.keepAliveForegroundNotification] ?: true,
         )
     }
 
@@ -45,6 +52,9 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.readTimeoutSec] = config.readTimeoutSec.coerceAtLeast(1)
             prefs[Keys.callTimeoutSec] = config.callTimeoutSec.coerceAtLeast(0)
             prefs[Keys.remoteDir] = config.remoteDir.trim().trim('/')
+            prefs[Keys.keepAliveBatteryOptimization] = config.keepAliveBatteryOptimization
+            prefs[Keys.keepAliveUnrestrictedBattery] = config.keepAliveUnrestrictedBattery
+            prefs[Keys.keepAliveForegroundNotification] = config.keepAliveForegroundNotification
         }
     }
 }
