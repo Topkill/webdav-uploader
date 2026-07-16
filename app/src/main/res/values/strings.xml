@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WebDAV 上传器</string>
+    <string name="upload_channel_name">上传任务</string>
+    <string name="upload_channel_desc">显示 WebDAV 上传进度</string>
+    <string name="upload_notification_title">正在上传到 WebDAV</string>
+</resources>
