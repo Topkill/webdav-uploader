@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,8 +21,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.webdav.uploader.ui.AppScreen
+import com.webdav.uploader.ui.HistoryScreen
 import com.webdav.uploader.ui.MainScreen
 import com.webdav.uploader.ui.MainViewModel
+import com.webdav.uploader.ui.SettingsScreen
 import com.webdav.uploader.upload.UploadService
 
 class MainActivity : ComponentActivity() {
@@ -34,15 +38,19 @@ class MainActivity : ComponentActivity() {
         handleShareIntent(intent)
 
         setContent {
+            val screen by vm.screen.collectAsStateWithLifecycle()
             val config by vm.config.collectAsStateWithLifecycle()
             val upload by UploadService.state.collectAsStateWithLifecycle()
+            val settingsDraft by vm.settingsDraft.collectAsStateWithLifecycle()
+            val historyMaxDraft by vm.historyMaxDraft.collectAsStateWithLifecycle()
+            val settingsMessage by vm.settingsMessage.collectAsStateWithLifecycle()
             val probeMsg by vm.probeMessage.collectAsStateWithLifecycle()
             val history by vm.history.collectAsStateWithLifecycle()
             val historyMax by vm.historyMaxItems.collectAsStateWithLifecycle()
             val historyMsg by vm.historyMessage.collectAsStateWithLifecycle()
 
             val pickFiles = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenMultipleDocuments()
+                ActivityResultContracts.OpenMultipleDocuments(),
             ) { uris: List<Uri> ->
                 if (uris.isNotEmpty()) {
                     uris.forEach { uri ->
@@ -52,37 +60,48 @@ class MainActivity : ComponentActivity() {
                                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
                             )
                         } catch (_: SecurityException) {
-                            // 部分选择器不支持 persistable
+                            // ignore
                         }
                     }
                     UploadService.start(this, uris)
                 }
             }
 
+            BackHandler(enabled = screen !is AppScreen.Home) {
+                vm.navigate(AppScreen.Home)
+            }
+
             MaterialTheme(colorScheme = lightColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MainScreen(
-                        config = config,
-                        upload = upload,
-                        probeMessage = probeMsg,
-                        history = history,
-                        historyMaxItems = historyMax,
-                        historyMessage = historyMsg,
-                        onConfigChange = vm::updateLocal,
-                        onSave = vm::save,
-                        onProbe = vm::probe,
-                        onPickFiles = {
-                            pickFiles.launch(arrayOf("*/*"))
-                        },
-                        onCancel = { UploadService.stop(this) },
-                        onSetHistoryMaxItems = vm::setHistoryMaxItems,
-                        onAddHistory = { fileName, fileSize, remotePath, status, message ->
-                            vm.addHistory(fileName, fileSize, remotePath, status, message)
-                        },
-                        onUpdateHistory = vm::updateHistory,
-                        onDeleteHistory = vm::deleteHistory,
-                        onClearHistory = vm::clearHistory,
-                    )
+                    when (screen) {
+                        AppScreen.Home -> MainScreen(
+                            config = config,
+                            upload = upload,
+                            onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
+                            onCancel = { UploadService.stop(this) },
+                            onOpenSettings = { vm.navigate(AppScreen.Settings) },
+                            onOpenHistory = { vm.navigate(AppScreen.History) },
+                        )
+                        AppScreen.Settings -> SettingsScreen(
+                            draft = settingsDraft,
+                            historyMaxDraft = historyMaxDraft,
+                            settingsMessage = settingsMessage,
+                            probeMessage = probeMsg,
+                            onDraftChange = vm::updateSettingsDraft,
+                            onHistoryMaxChange = vm::updateHistoryMaxDraft,
+                            onSave = vm::saveSettings,
+                            onProbe = vm::probe,
+                            onBack = { vm.navigate(AppScreen.Home) },
+                        )
+                        AppScreen.History -> HistoryScreen(
+                            history = history,
+                            historyMaxItems = historyMax,
+                            historyMessage = historyMsg,
+                            onDelete = vm::deleteHistory,
+                            onClear = vm::clearHistory,
+                            onBack = { vm.navigate(AppScreen.Home) },
+                        )
+                    }
                 }
             }
         }

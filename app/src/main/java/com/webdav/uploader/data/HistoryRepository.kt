@@ -62,7 +62,7 @@ class HistoryRepository(private val context: Context) {
         }
     }
 
-    /** 新增（上传完成时自动调用，也会给手动补录用） */
+    /** 仅上传流程内部写入，UI 不提供手动新增/编辑 */
     suspend fun add(record: UploadHistoryRecord) {
         context.historyDataStore.edit { prefs ->
             val maxItems = (prefs[Keys.maxItems] ?: DEFAULT_MAX_ITEMS)
@@ -73,22 +73,6 @@ class HistoryRepository(private val context: Context) {
         }
     }
 
-    /** 更新已有记录 */
-    suspend fun update(record: UploadHistoryRecord): Boolean {
-        var updated = false
-        context.historyDataStore.edit { prefs ->
-            val current = parse(prefs[Keys.itemsJson].orEmpty())
-            if (current.none { it.id == record.id }) return@edit
-            updated = true
-            val next = current.map { if (it.id == record.id) record.copy(
-                durationMs = (record.finishedAt - record.startedAt).coerceAtLeast(0),
-            ) else it }
-            prefs[Keys.itemsJson] = toJson(next)
-        }
-        return updated
-    }
-
-    /** 按 id 删除 */
     suspend fun delete(id: String): Boolean {
         var removed = false
         context.historyDataStore.edit { prefs ->
@@ -99,19 +83,6 @@ class HistoryRepository(private val context: Context) {
         }
         return removed
     }
-
-    /** 批量删除 */
-    suspend fun deleteAll(ids: Collection<String>) {
-        if (ids.isEmpty()) return
-        val idSet = ids.toSet()
-        context.historyDataStore.edit { prefs ->
-            val current = parse(prefs[Keys.itemsJson].orEmpty())
-            prefs[Keys.itemsJson] = toJson(current.filterNot { it.id in idSet })
-        }
-    }
-
-    suspend fun getById(id: String): UploadHistoryRecord? =
-        historyFlow.first().firstOrNull { it.id == id }
 
     suspend fun clear() {
         context.historyDataStore.edit { prefs ->
