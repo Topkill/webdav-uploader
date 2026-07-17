@@ -33,7 +33,14 @@ data class UploadSession(
 )
 
 class SessionRepository(context: Context) {
-    private val dir = File(context.filesDir, "sessions").apply { mkdirs() }
+    private val appContext = context.applicationContext
+
+    /**
+     * 数据目录：应用外部专属目录（无需 root，文件管理器/电脑 MTP 可见）
+     * 例如：/storage/emulated/0/Android/data/com.webdav.uploader/files/webdav-uploader/sessions
+     * 不可用时回退 filesDir。
+     */
+    private val dir: File = resolveDataDir(appContext)
     private val indexFile = File(dir, "index.json")
     private val mutex = Mutex()
 
@@ -321,5 +328,55 @@ class SessionRepository(context: Context) {
         out.writeText(root.toString())
         // 迁移：若仍有旧扁平 json，写完后删除
         sessionFileLegacy(s.id).takeIf { it.exists() && it != out }?.delete()
+    }
+
+    fun dataRootPath(): String = dir.parentFile?.absolutePath ?: dir.absolutePath
+
+    companion object {
+        fun resolveDataDir(context: Context): File {
+            val external = runCatching {
+                context.getExternalFilesDir(null)
+            }.getOrNull()
+            val root = if (external != null) {
+                File(external, "webdav-uploader")
+            } else {
+                // 外部存储不可用时回退应用私有目录
+                File(context.filesDir, "webdav-uploader")
+            }
+            val sessions = File(root, "sessions")
+            sessions.mkdirs()
+            val readme = File(root, "README.txt")
+            if (!readme.exists()) {
+                runCatching {
+                    readme.writeText(
+                        "WebDAV Uploader 数据目录\n" +
+                            "- sessions/ : 上传任务结果与过程日志\n" +
+                            "- 每个任务: sessions/<任务ID>/session.json + run.log\n" +
+                            "- 可用文件管理器直接删除过多日志\n" +
+                            "路径: " + (sessions.parentFile?.absolutePath ?: root.absolutePath) + "\n",
+                    )
+                }
+            }
+            migrateLegacyIfNeeded(context, sessions)
+            return sessions
+        }
+
+        private fun migrateLegacyIfNeeded(context: Context, newSessionsDir: File) {
+            val legacy = File(context.filesDir, "sessions")
+            if (!legacy.exists() || !legacy.isDirectory) return
+            runCatching {
+                legacy.listFiles()?.forEach { child ->
+                    val target = File(newSessionsDir, child.name)
+                    if (!target.exists()) {
+                        child.copyRecursively(target, overwrite = false)
+                    }
+                }
+            }
+        }
+
+        fun dataRootPath(context: Context): String {
+            val sessions = resolveDataDir(context.applicationContext)
+            return sessions.parentFile?.absolutePath ?: sessions.absolutePath
+        }
     }
 }

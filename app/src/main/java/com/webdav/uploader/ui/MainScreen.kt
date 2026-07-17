@@ -42,6 +42,7 @@ import com.webdav.uploader.upload.UploadUiState
 fun MainScreen(
     config: WebDavConfig,
     upload: UploadUiState,
+    dataPath: String,
     onPickFiles: () -> Unit,
     onCancel: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -105,6 +106,12 @@ fun MainScreen(
                     Text("读超时: ${config.readTimeoutSec}s")
                     Text(
                         "可在右上角「更多 → 设置」修改。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "数据目录(可直接访问，无需 root):
+$dataPath",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -55,6 +55,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val sessions: StateFlow<List<UploadSessionSummary>> = sessionRepo.sessions
 
+    /** 无需 root 的数据目录（Android/data/...） */
+    val dataPath: String = sessionRepo.dataRootPath()
+
     private val _sessionDetail = MutableStateFlow<UploadSession?>(null)
     val sessionDetail: StateFlow<UploadSession?> = _sessionDetail.asStateFlow()
 

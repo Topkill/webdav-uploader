@@ -87,21 +87,49 @@ class UploadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                startForegroundCompat()
+                try {
+                    startForegroundCompat()
+                } catch (e: Exception) {
+                    // 前台服务失败也不应直接杀进程
+                    _state.value = _state.value.copy(
+                        lastError = "前台服务启动失败: ${e.message}",
+                        log = appendLog(_state.value.log, "前台服务启动失败: ${e.message}"),
+                    )
+                }
                 scope.launch {
-                    val config = SettingsRepository(applicationContext).configFlow.first()
-                    useForeground = config.keepAliveForegroundNotification
-                    if (!useForeground) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    try {
+                        val config = SettingsRepository(applicationContext).configFlow.first()
+                        useForeground = config.keepAliveForegroundNotification
+                        if (!useForeground) {
+                            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+                        }
+                        acquireWakeLock()
+                        // 优先从进程内队列取完整列表；兼容旧 Intent EXTRA
+                        val queued = PendingUploadQueue.take()
+                        val fromIntent = intent.getStringArrayListExtra(EXTRA_URIS)
+                            ?.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
+                            .orEmpty()
+                        val uris = if (queued.isNotEmpty()) queued else fromIntent
+                        if (uris.isEmpty()) {
+                            _state.value = _state.value.copy(
+                                running = false,
+                                phase = "无有效文件",
+                                lastError = "没有可上传的文件",
+                            )
+                            finishService()
+                            return@launch
+                        }
+                        enqueue(uris, config)
+                    } catch (e: Exception) {
+                        val msg = e.message ?: e.javaClass.simpleName
+                        _state.value = _state.value.copy(
+                            running = false,
+                            phase = "启动失败",
+                            lastError = msg,
+                            log = appendLog(_state.value.log, "启动失败: $msg"),
+                        )
+                        finishService()
                     }
-                    acquireWakeLock()
-                    // 优先从进程内队列取完整列表；兼容旧 Intent EXTRA
-                    val queued = PendingUploadQueue.take()
-                    val fromIntent = intent.getStringArrayListExtra(EXTRA_URIS)
-                        ?.mapNotNull { runCatching { Uri.parse(it) }.getOrNull() }
-                        .orEmpty()
-                    val uris = if (queued.isNotEmpty()) queued else fromIntent
-                    enqueue(uris, config)
                 }
             }
             ACTION_STOP -> {
@@ -130,7 +158,8 @@ class UploadService : Service() {
     private fun enqueue(uris: List<Uri>, preloadedConfig: WebDavConfig? = null) {
         job?.cancel()
         job = scope.launch {
-            queueMutex.withLock {
+            try {
+                queueMutex.withLock {
                 val settings = SettingsRepository(applicationContext)
                 val sessionRepo = SessionRepository(applicationContext)
                 val config = preloadedConfig ?: settings.configFlow.first()
@@ -369,26 +398,68 @@ class UploadService : Service() {
                     )
                 }
                 finishService()
+                }
+            } catch (e: CancellationException) {
+                _state.value = _state.value.copy(
+                    running = false,
+                    phase = "已取消",
+                    lastError = "用户取消",
+                )
+                finishService()
+            } catch (e: Exception) {
+                val msg = e.message ?: e.javaClass.simpleName
+                _state.value = _state.value.copy(
+                    running = false,
+                    phase = "异常退出",
+                    lastError = msg,
+                    log = appendLog(_state.value.log, "致命错误: $msg"),
+                )
+                val sid = processLogSessionId
+                val repo = processLogRepo
+                if (sid != null && repo != null) {
+                    try {
+                        repo.appendProcessLog(sid, "致命错误: $msg")
+                    } catch (_: Exception) {
+                    }
+                }
+                if (useForeground) {
+                    runCatching {
+                        updateNotification("上传异常: $msg", 0, 0, ongoing = false)
+                    }
+                }
+                finishService()
             }
         }
     }
 
     private fun resolveItem(uri: Uri): UploadItem? {
-        val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
-            if (cursor.moveToFirst()) {
-                val name = if (nameIdx >= 0) cursor.getString(nameIdx) else "file"
-                val size = if (sizeIdx >= 0) cursor.getLong(sizeIdx) else -1L
-                val finalSize = if (size >= 0) size else {
-                    contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        return runCatching {
+            val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    val name = if (nameIdx >= 0) cursor.getString(nameIdx) else "file"
+                    val size = if (sizeIdx >= 0) cursor.getLong(sizeIdx) else -1L
+                    val finalSize = if (size >= 0) size else {
+                        contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+                    }
+                    if (finalSize < 0) return@runCatching null
+                    return@runCatching UploadItem(
+                        uri = uri.toString(),
+                        displayName = name ?: "file",
+                        size = finalSize,
+                    )
                 }
-                if (finalSize < 0) return null
-                return UploadItem(uri.toString(), name ?: "file", finalSize)
             }
-        }
-        return null
+            // 元数据查询失败时再尝试直接打开
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                val size = afd.length
+                if (size < 0) return@runCatching null
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                UploadItem(uri.toString(), name, size)
+            }
+        }.getOrNull()
     }
 
     private fun startForegroundCompat() {
@@ -511,6 +582,15 @@ class UploadService : Service() {
          */
         fun start(context: Context, uris: List<Uri>) {
             if (uris.isEmpty()) return
+            // 尽量拿持久读权限，降低选完文件后立刻读失败/闪退风险
+            uris.forEach { uri ->
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
+            }
             PendingUploadQueue.set(uris)
             val intent = Intent(context, UploadService::class.java).apply {
                 action = ACTION_START
@@ -520,7 +600,16 @@ class UploadService : Service() {
                 }
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            ContextCompat.startForegroundService(context, intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                // 兜底：部分机型/状态下 FGS 启动失败
+                runCatching { context.startService(intent) }
+                _state.value = _state.value.copy(
+                    lastError = "启动上传服务失败: ${e.message}",
+                    log = appendLog(_state.value.log, "启动上传服务失败: ${e.message}"),
+                )
+            }
         }
 
         fun stop(context: Context) {

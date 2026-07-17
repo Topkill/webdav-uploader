@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
                         AppScreen.Home -> MainScreen(
                             config = config,
                             upload = upload,
+                            dataPath = vm.dataPath,
                             onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
                             onCancel = { UploadService.stop(this) },
                             onOpenSettings = { vm.navigate(AppScreen.Settings) },
