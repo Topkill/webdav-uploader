@@ -114,6 +114,32 @@ class SessionRepository(context: Context) {
         mutex.withLock { readSession(sessionId) }
     }
 
+    suspend fun deleteRecords(sessionId: String, recordIds: Collection<String>): UploadSession? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (recordIds.isEmpty()) return@withLock readSession(sessionId)
+                val current = readSession(sessionId) ?: return@withLock null
+                val idSet = recordIds.toSet()
+                val records = current.records.filterNot { it.id in idSet }
+                val success = records.count { it.status == UploadHistoryStatus.SUCCESS }
+                val failed = records.count { it.status == UploadHistoryStatus.FAILED }
+                val cancelled = records.count { it.status == UploadHistoryStatus.CANCELLED }
+                val summary = current.summary.copy(
+                    total = records.size,
+                    success = success,
+                    failed = failed,
+                    cancelled = cancelled,
+                    finishedAt = records.maxOfOrNull { it.finishedAt } ?: current.summary.finishedAt,
+                )
+                val updated = UploadSession(summary, records)
+                writeSession(updated)
+                val index = readIndex().map { if (it.id == sessionId) summary else it }
+                writeIndex(index)
+                _sessions.value = index
+                updated
+            }
+        }
+
     suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             sessionFile(sessionId).delete()

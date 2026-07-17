@@ -125,6 +125,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun deleteRecordsInSession(sessionId: String, recordIds: Collection<String>) {
+        viewModelScope.launch {
+            val updated = sessionRepo.deleteRecords(sessionId, recordIds)
+            _sessionDetail.value = updated
+        }
+    }
+
     fun deleteSession(id: String) {
         viewModelScope.launch {
             sessionRepo.deleteSession(id)

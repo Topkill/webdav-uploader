@@ -21,17 +21,20 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -230,11 +233,15 @@ fun UploadRecordDetailScreen(
     session: UploadSession?,
     onBack: () -> Unit,
     onDeleteSession: (String) -> Unit,
+    onDeleteRecords: (sessionId: String, recordIds: Collection<String>) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(RecordFilter.ALL) }
     var expandedIds by remember { mutableStateOf(setOf<String>()) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDeleteSelected by remember { mutableStateOf(false) }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
 
     val records = session?.records.orEmpty()
     val filtered = remember(records, query, filter) {
@@ -255,6 +262,12 @@ fun UploadRecordDetailScreen(
                     .contains(q)
             }
         }
+    }
+
+    LaunchedEffect(records) {
+        val valid = records.map { it.id }.toSet()
+        selectedIds = selectedIds.intersect(valid)
+        expandedIds = expandedIds.intersect(valid)
     }
 
     Scaffold(
@@ -328,34 +341,77 @@ fun UploadRecordDetailScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { selectedIds = filtered.map { it.id }.toSet() },
+                        enabled = filtered.isNotEmpty(),
+                    ) { Text("全选") }
+                    OutlinedButton(
+                        onClick = {
+                            val visible = filtered.map { it.id }.toSet()
+                            selectedIds = visible - selectedIds
+                        },
+                        enabled = filtered.isNotEmpty(),
+                    ) { Text("反选") }
+                    OutlinedButton(
+                        onClick = { selectedIds = emptySet() },
+                        enabled = selectedIds.isNotEmpty(),
+                    ) { Text("取消选择") }
+                    OutlinedButton(
+                        onClick = { confirmDeleteSelected = true },
+                        enabled = selectedIds.isNotEmpty(),
+                    ) { Text("删除所选(${selectedIds.size})") }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "显示 ${filtered.size}/${records.size} · 点击条目展开详情",
+                    text = "显示 ${filtered.size}/${records.size} · 已选 ${selectedIds.size} · 点击条目展开详情",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(
-                        items = filtered,
-                        key = { it.id },
-                    ) { record ->
-                        val expanded = record.id in expandedIds
-                        RecordRowCard(
-                            record = record,
-                            expanded = expanded,
-                            onToggle = {
-                                expandedIds = if (expanded) {
-                                    expandedIds - record.id
-                                } else {
-                                    expandedIds + record.id
-                                }
-                            },
-                        )
+                if (filtered.isEmpty()) {
+                    Text(
+                        text = if (records.isEmpty()) "本任务暂无文件记录。" else "没有符合条件的记录。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(
+                            items = filtered,
+                            key = { it.id },
+                        ) { record ->
+                            val expanded = record.id in expandedIds
+                            val selected = record.id in selectedIds
+                            RecordRowCard(
+                                record = record,
+                                expanded = expanded,
+                                selected = selected,
+                                onToggleExpand = {
+                                    expandedIds = if (expanded) {
+                                        expandedIds - record.id
+                                    } else {
+                                        expandedIds + record.id
+                                    }
+                                },
+                                onToggleSelect = {
+                                    selectedIds = if (selected) {
+                                        selectedIds - record.id
+                                    } else {
+                                        selectedIds + record.id
+                                    }
+                                },
+                                onDelete = { pendingDeleteId = record.id },
+                            )
+                        }
+                        item { Spacer(modifier = Modifier.height(24.dp)) }
                     }
-                    item { Spacer(modifier = Modifier.height(24.dp)) }
                 }
             }
         }
@@ -379,13 +435,58 @@ fun UploadRecordDetailScreen(
             },
         )
     }
-}
 
+    if (confirmDeleteSelected && session != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteSelected = false },
+            title = { Text("删除所选？") },
+            text = { Text("将删除 ${selectedIds.size} 条记录，不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteRecords(session.summary.id, selectedIds)
+                        selectedIds = emptySet()
+                        confirmDeleteSelected = false
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteSelected = false }) { Text("取消") }
+            },
+        )
+    }
+
+    pendingDeleteId?.let { id ->
+        val sid = session?.summary?.id
+        if (sid != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDeleteId = null },
+                title = { Text("删除这条记录？") },
+                text = { Text("删除后不可恢复。") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            onDeleteRecords(sid, listOf(id))
+                            selectedIds = selectedIds - id
+                            pendingDeleteId = null
+                        },
+                    ) { Text("删除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteId = null }) { Text("取消") }
+                },
+            )
+        }
+    }
+}
 @Composable
 private fun RecordRowCard(
     record: UploadHistoryRecord,
     expanded: Boolean,
-    onToggle: () -> Unit,
+    selected: Boolean,
+    onToggleExpand: () -> Unit,
+    onToggleSelect: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val statusColor = when (record.status) {
         UploadHistoryStatus.SUCCESS -> Color(0xFF2E7D32)
@@ -399,13 +500,17 @@ private fun RecordRowCard(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Column(modifier = Modifier.padding(10.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggle),
+                    .clickable(onClick = onToggleExpand),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onToggleSelect() },
+                )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = record.fileName,
@@ -427,19 +532,22 @@ private fun RecordRowCard(
                 )
             }
             AnimatedVisibility(visible = expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier.padding(start = 12.dp, end = 8.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Text(text = "远端: ${record.remotePath.ifBlank { "-" }}")
                     Text(text = "服务器: ${record.baseUrl.ifBlank { "-" }}")
                     Text(text = "耗时: ${formatDuration(record.durationMs)}")
                     if (record.message.isNotBlank()) {
                         Text(text = "备注: ${record.message}")
                     }
+                    OutlinedButton(onClick = onDelete) { Text("删除") }
                 }
             }
         }
     }
 }
-
 private fun statusLabel(status: UploadHistoryStatus): String = when (status) {
     UploadHistoryStatus.SUCCESS -> "成功"
     UploadHistoryStatus.FAILED -> "失败"

@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
                             session = sessionDetail,
                             onBack = { vm.navigate(AppScreen.UploadRecords) },
                             onDeleteSession = vm::deleteSession,
+                            onDeleteRecords = vm::deleteRecordsInSession,
                         )
                     }
                 }
