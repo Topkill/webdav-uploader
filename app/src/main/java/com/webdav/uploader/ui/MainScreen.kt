@@ -110,8 +110,7 @@ fun MainScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "数据目录(可直接访问，无需 root):
-$dataPath",
+                        text = "数据目录(可直接访问，无需 root):\n$dataPath",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
