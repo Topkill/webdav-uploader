@@ -140,9 +140,31 @@ class SessionRepository(context: Context) {
             }
         }
 
+    /**
+     * 追加任务过程日志到 sessions/<id>/run.log，无上限。
+     * 主页仍用内存 StateFlow 实时显示（可截断），磁盘完整保留。
+     */
+    suspend fun appendProcessLog(sessionId: String, line: String) = withContext(Dispatchers.IO) {
+        val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        val textLine = "[$ts] $line\n"
+        runCatching {
+            val file = processLogFile(sessionId)
+            file.parentFile?.mkdirs()
+            file.appendText(textLine)
+        }
+    }
+
     suspend fun deleteSession(sessionId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            sessionFile(sessionId).delete()
+            // 目录结构：sessions/<id>/session.json + run.log
+            val folder = sessionDir(sessionId)
+            if (folder.exists()) {
+                folder.deleteRecursively()
+            } else {
+                // 兼容旧版扁平 sessions/<id>.json
+                sessionFileLegacy(sessionId).delete()
+            }
             val index = readIndex().filterNot { it.id == sessionId }
             writeIndex(index)
             _sessions.value = index
@@ -151,13 +173,23 @@ class SessionRepository(context: Context) {
 
     suspend fun clearAllSessions() = withContext(Dispatchers.IO) {
         mutex.withLock {
-            dir.listFiles()?.forEach { it.delete() }
+            dir.listFiles()?.forEach { child ->
+                if (child.isDirectory) child.deleteRecursively() else child.delete()
+            }
             writeIndex(emptyList())
             _sessions.value = emptyList()
         }
     }
 
-    private fun sessionFile(id: String) = File(dir, "$id.json")
+    private fun sessionDir(id: String) = File(dir, id)
+
+    /** 新结构：sessions/<id>/session.json */
+    private fun sessionFile(id: String): File = File(sessionDir(id), "session.json")
+
+    /** 旧结构兼容：sessions/<id>.json */
+    private fun sessionFileLegacy(id: String): File = File(dir, "$id.json")
+
+    private fun processLogFile(id: String): File = File(sessionDir(id), "run.log")
 
     private fun readIndex(): List<UploadSessionSummary> {
         if (!indexFile.exists()) return emptyList()
@@ -204,7 +236,7 @@ class SessionRepository(context: Context) {
     }
 
     private fun readSession(id: String): UploadSession? {
-        val f = sessionFile(id)
+        val f = sessionFile(id).takeIf { it.exists() } ?: sessionFileLegacy(id)
         if (!f.exists()) return null
         return runCatching {
             val root = JSONObject(f.readText())
@@ -284,6 +316,10 @@ class SessionRepository(context: Context) {
                     .put("baseUrl", s.baseUrl),
             )
             .put("records", recordsArr)
-        sessionFile(s.id).writeText(root.toString())
+        val out = sessionFile(s.id)
+        out.parentFile?.mkdirs()
+        out.writeText(root.toString())
+        // 迁移：若仍有旧扁平 json，写完后删除
+        sessionFileLegacy(s.id).takeIf { it.exists() && it != out }?.delete()
     }
 }

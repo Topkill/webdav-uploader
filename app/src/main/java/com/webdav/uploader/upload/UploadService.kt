@@ -65,6 +65,9 @@ class UploadService : Service() {
     private val queueMutex = Mutex()
     private var wakeLock: PowerManager.WakeLock? = null
     private var useForeground = true
+    /** 当前任务过程日志目标（主页内存 + sessions/<id>/run.log） */
+    private var processLogSessionId: String? = null
+    private var processLogRepo: SessionRepository? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -103,11 +106,17 @@ class UploadService : Service() {
             }
             ACTION_STOP -> {
                 job?.cancel()
+                val cancelLine = "用户取消上传"
                 _state.value = _state.value.copy(
                     running = false,
                     phase = "已取消",
-                    log = appendLog(_state.value.log, "用户取消上传"),
+                    log = appendLog(_state.value.log, cancelLine),
                 )
+                val sid = processLogSessionId
+                val repo = processLogRepo
+                if (sid != null && repo != null) {
+                    scope.launch { repo.appendProcessLog(sid, cancelLine) }
+                }
                 releaseWakeLock()
                 if (useForeground) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -123,7 +132,7 @@ class UploadService : Service() {
         job = scope.launch {
             queueMutex.withLock {
                 val settings = SettingsRepository(applicationContext)
-                                val sessionRepo = SessionRepository(applicationContext)
+                val sessionRepo = SessionRepository(applicationContext)
                 val config = preloadedConfig ?: settings.configFlow.first()
                 useForeground = config.keepAliveForegroundNotification
 
@@ -143,20 +152,28 @@ class UploadService : Service() {
                     baseUrl = config.baseUrl,
                     remoteDir = remoteDir,
                 )
+                processLogSessionId = sessionId
+                processLogRepo = sessionRepo
 
                 val client = WebDavClient(config)
                 var successCount = 0
                 var failedCount = 0
                 var cancelledCount = 0
-                var log = buildString {
-                    appendLine("开始上传 $totalCount 个文件")
-                    appendLine("远端目录: /$remoteDir")
-                    appendLine("读超时: ${config.readTimeoutSec}s")
-                    appendLine("任务ID: $sessionId")
-                    appendLine("完整结果写入「上传记录」")
-                    if (totalCount >= 500) {
-                        appendLine("大批量：进程内队列 + 串行上传")
-                    }
+                var log = ""
+
+                // 主页内存日志（可截断）+ 任务 run.log（无上限）
+                suspend fun pushLog(line: String) {
+                    sessionRepo.appendProcessLog(sessionId, line)
+                    log = appendLog(log, line)
+                }
+
+                pushLog("开始上传 $totalCount 个文件")
+                pushLog("远端目录: /$remoteDir")
+                pushLog("读超时: ${config.readTimeoutSec}s")
+                pushLog("任务ID: $sessionId")
+                pushLog("完整结果写入「上传记录」")
+                if (totalCount >= 500) {
+                    pushLog("大批量：进程内队列 + 串行上传")
                 }
 
                 _state.value = UploadUiState(
@@ -167,12 +184,13 @@ class UploadService : Service() {
                     sessionId = sessionId,
                 )
 
-                client.ensureDir(remoteDir).onFailure { e ->
-                    log = appendLog(log, "创建目录警告: ${e.message}")
+                val ensureResult = client.ensureDir(remoteDir)
+                ensureResult.exceptionOrNull()?.let { e ->
+                    pushLog("创建目录警告: ${e.message}")
                     _state.value = _state.value.copy(log = log)
                 }
 
-                uris.forEachIndexed { index, uri ->
+                for ((index, uri) in uris.withIndex()) {
                     val item = resolveItem(uri)
                     if (item == null) {
                         val finishedAt = System.currentTimeMillis()
@@ -187,23 +205,22 @@ class UploadService : Service() {
                             startedAt = finishedAt,
                             finishedAt = finishedAt,
                         )
-                        // 批次完整记录
                         sessionRepo.appendRecord(sessionId, record)
-                        // 全局历史仍写（可能被上限截断）
-                        log = appendLog(log, "跳过无法读取: ${record.fileName}")
+                        pushLog("跳过无法读取: ${record.fileName}")
                         _state.value = _state.value.copy(
                             log = log,
                             failedCount = failedCount,
                             lastError = "无法读取文件",
                         )
-                        return@forEachIndexed
+                        continue
                     }
 
                     val remotePath = if (remoteDir.isBlank()) item.displayName
                     else "$remoteDir/${item.displayName}"
                     val startedAt = System.currentTimeMillis()
 
-                    log = appendLog(log, "[${index + 1}/$totalCount] ${item.displayName}")
+                    pushLog("[${index + 1}/$totalCount] ${item.displayName}")
+                    // 仅裁剪主页内存日志；磁盘 run.log 无上限
                     if (log.length > 12_000) log = log.takeLast(8_000)
 
                     _state.value = _state.value.copy(
@@ -268,9 +285,10 @@ class UploadService : Service() {
                         }
 
                         val finishedAt = System.currentTimeMillis()
-                        result.onSuccess {
+                        val err = result.exceptionOrNull()
+                        if (err == null) {
                             successCount++
-                            log = appendLog(log, "成功: ${item.displayName}")
+                            pushLog("成功: ${item.displayName}")
                             val record = UploadHistoryRecord(
                                 fileName = item.displayName,
                                 fileSize = item.size,
@@ -287,16 +305,16 @@ class UploadService : Service() {
                                 log = log,
                                 successCount = successCount,
                             )
-                        }.onFailure { e ->
+                        } else {
                             failedCount++
-                            log = appendLog(log, "失败: ${item.displayName} -> ${e.message}")
+                            pushLog("失败: ${item.displayName} -> ${err.message}")
                             val record = UploadHistoryRecord(
                                 fileName = item.displayName,
                                 fileSize = item.size,
                                 remotePath = remotePath,
                                 baseUrl = config.baseUrl,
                                 status = UploadHistoryStatus.FAILED,
-                                message = e.message.orEmpty().ifBlank { "上传失败" },
+                                message = err.message.orEmpty().ifBlank { "上传失败" },
                                 startedAt = startedAt,
                                 finishedAt = finishedAt,
                             )
@@ -304,14 +322,14 @@ class UploadService : Service() {
                             _state.value = _state.value.copy(
                                 phase = "失败",
                                 log = log,
-                                lastError = e.message,
+                                lastError = err.message,
                                 failedCount = failedCount,
                             )
                         }
                     } catch (e: CancellationException) {
                         cancelledCount++
                         val finishedAt = System.currentTimeMillis()
-                        log = appendLog(log, "取消: ${item.displayName}")
+                        pushLog("取消: ${item.displayName}")
                         val record = UploadHistoryRecord(
                             fileName = item.displayName,
                             fileSize = item.size,
@@ -329,8 +347,7 @@ class UploadService : Service() {
                 }
 
                 sessionRepo.finishSession(sessionId)
-                log = appendLog(
-                    log,
+                pushLog(
                     "全部结束：成功 $successCount / 失败 $failedCount / 取消 $cancelledCount（共 $totalCount）",
                 )
                 _state.value = _state.value.copy(
@@ -467,6 +484,8 @@ class UploadService : Service() {
 
     private fun finishService() {
         releaseWakeLock()
+        processLogSessionId = null
+        processLogRepo = null
         if (useForeground) {
             stopForeground(STOP_FOREGROUND_DETACH)
         }
