@@ -12,6 +12,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -19,9 +22,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -45,8 +45,7 @@ fun MainScreen(
     onPickFiles: () -> Unit,
     onCancel: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenHistory: () -> Unit,
-    onOpenSessions: () -> Unit,
+    onOpenRecords: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -70,17 +69,10 @@ fun MainScreen(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("上传历史") },
+                            text = { Text("上传记录") },
                             onClick = {
                                 menuExpanded = false
-                                onOpenHistory()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("批次结果") },
-                            onClick = {
-                                menuExpanded = false
-                                onOpenSessions()
+                                onOpenRecords()
                             },
                         )
                     }
@@ -153,8 +145,12 @@ fun StatusCard(upload: UploadUiState) {
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("状态: ${upload.phase}", style = MaterialTheme.typography.titleSmall)
-            if (upload.totalCount > 0 && (upload.successCount + upload.failedCount + upload.cancelledCount) > 0) {
-                Text("累计: 成功 ${upload.successCount} / 失败 ${upload.failedCount} / 取消 ${upload.cancelledCount}")
+            if (upload.totalCount > 0 &&
+                (upload.successCount + upload.failedCount + upload.cancelledCount) > 0
+            ) {
+                Text(
+                    "累计: 成功 ${upload.successCount} / 失败 ${upload.failedCount} / 取消 ${upload.cancelledCount}",
+                )
             }
             if (upload.totalCount > 0) {
                 Text("文件: ${upload.currentIndex}/${upload.totalCount}  ${upload.currentName}")

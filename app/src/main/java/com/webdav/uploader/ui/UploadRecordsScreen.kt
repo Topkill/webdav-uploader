@@ -41,7 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.webdav.uploader.data.SessionRepository
 import com.webdav.uploader.data.UploadHistoryRecord
 import com.webdav.uploader.data.UploadHistoryStatus
 import com.webdav.uploader.data.UploadSession
@@ -50,9 +49,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * 上传记录：默认按任务/批次列表。
+ * 无任务数上限；用户可删除单个任务或清空全部。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SessionsScreen(
+fun UploadRecordsScreen(
     sessions: List<UploadSessionSummary>,
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
@@ -60,11 +63,12 @@ fun SessionsScreen(
     onBack: () -> Unit,
 ) {
     var confirmClear by remember { mutableStateOf(false) }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("批次结果") },
+                title = { Text("上传记录") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -91,14 +95,14 @@ fun SessionsScreen(
                 .padding(16.dp),
         ) {
             Text(
-                text = "每次上传任务的完整成功/失败清单。不受「历史上限」截断。最多保留 ${SessionRepository.MAX_SESSIONS} 个批次。",
+                text = "按上传任务查看完整成功/失败清单。任务数量无上限，可手动删除。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(12.dp))
 
             if (sessions.isEmpty()) {
-                Text(text = "暂无批次。完成一次上传后会出现在这里。")
+                Text(text = "暂无记录。完成一次上传后会出现在这里。")
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -106,12 +110,12 @@ fun SessionsScreen(
                 ) {
                     items(
                         items = sessions,
-                        key = { summary -> summary.id },
+                        key = { it.id },
                     ) { summary ->
-                        SessionSummaryCard(
+                        TaskSummaryCard(
                             summary = summary,
                             onOpen = { onOpen(summary.id) },
-                            onDelete = { onDelete(summary.id) },
+                            onDelete = { pendingDeleteId = summary.id },
                         )
                     }
                 }
@@ -122,33 +126,61 @@ fun SessionsScreen(
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text("清空全部批次？") },
-            text = { Text("将删除所有完整批次结果，不可恢复。") },
+            title = { Text("清空全部上传记录？") },
+            text = { Text("将删除所有任务的完整结果，不可恢复。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onClear()
                         confirmClear = false
                     },
-                ) {
-                    Text("清空")
-                }
+                ) { Text("清空") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClear = false }) {
-                    Text("取消")
-                }
+                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+            },
+        )
+    }
+
+    pendingDeleteId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text("删除这个任务？") },
+            text = { Text("将删除该任务的全部文件结果，不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete(id)
+                        pendingDeleteId = null
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) { Text("取消") }
             },
         )
     }
 }
 
 @Composable
-private fun SessionSummaryCard(
+private fun TaskSummaryCard(
     summary: UploadSessionSummary,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val statusText = when {
+        summary.total == 0 -> "进行中/空"
+        summary.failed == 0 && summary.cancelled == 0 -> "全部成功"
+        summary.success == 0 && summary.failed > 0 -> "全部失败"
+        else -> "部分失败"
+    }
+    val statusColor = when {
+        summary.total > 0 && summary.failed == 0 && summary.cancelled == 0 -> Color(0xFF2E7D32)
+        summary.failed > 0 -> MaterialTheme.colorScheme.error
+        summary.cancelled > 0 -> Color(0xFFEF6C00)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -166,6 +198,11 @@ private fun SessionSummaryCard(
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
+                text = statusText,
+                color = statusColor,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
                 text = "共 ${summary.total} · 成功 ${summary.success} · 失败 ${summary.failed} · 取消 ${summary.cancelled}",
             )
             Text(
@@ -173,14 +210,14 @@ private fun SessionSummaryCard(
                 style = MaterialTheme.typography.bodySmall,
             )
             Row {
-                TextButton(onClick = onOpen) { Text("查看") }
+                TextButton(onClick = onOpen) { Text("查看明细") }
                 TextButton(onClick = onDelete) { Text("删除") }
             }
         }
     }
 }
 
-private enum class SessionFilter {
+private enum class RecordFilter {
     ALL,
     SUCCESS,
     FAILED,
@@ -189,31 +226,29 @@ private enum class SessionFilter {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SessionDetailScreen(
+fun UploadRecordDetailScreen(
     session: UploadSession?,
     onBack: () -> Unit,
     onDeleteSession: (String) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(SessionFilter.ALL) }
+    var filter by remember { mutableStateOf(RecordFilter.ALL) }
     var expandedIds by remember { mutableStateOf(setOf<String>()) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     val records = session?.records.orEmpty()
     val filtered = remember(records, query, filter) {
         val q = query.trim().lowercase(Locale.getDefault())
         records.filter { record ->
             val statusOk = when (filter) {
-                SessionFilter.ALL -> true
-                SessionFilter.SUCCESS -> record.status == UploadHistoryStatus.SUCCESS
-                SessionFilter.FAILED -> record.status == UploadHistoryStatus.FAILED
-                SessionFilter.CANCELLED -> record.status == UploadHistoryStatus.CANCELLED
+                RecordFilter.ALL -> true
+                RecordFilter.SUCCESS -> record.status == UploadHistoryStatus.SUCCESS
+                RecordFilter.FAILED -> record.status == UploadHistoryStatus.FAILED
+                RecordFilter.CANCELLED -> record.status == UploadHistoryStatus.CANCELLED
             }
-            if (!statusOk) {
-                return@filter false
-            }
-            if (q.isEmpty()) {
-                true
-            } else {
+            if (!statusOk) return@filter false
+            if (q.isEmpty()) true
+            else {
                 listOf(record.fileName, record.remotePath, record.message)
                     .joinToString(" ")
                     .lowercase(Locale.getDefault())
@@ -225,7 +260,7 @@ fun SessionDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("批次详情") },
+                title = { Text("任务明细") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -236,8 +271,8 @@ fun SessionDetailScreen(
                 },
                 actions = {
                     if (session != null) {
-                        TextButton(onClick = { onDeleteSession(session.summary.id) }) {
-                            Text("删除批次")
+                        TextButton(onClick = { confirmDelete = true }) {
+                            Text("删除任务")
                         }
                     }
                 },
@@ -251,7 +286,7 @@ fun SessionDetailScreen(
                 .padding(horizontal = 16.dp),
         ) {
             if (session == null) {
-                Text(text = "批次不存在或已删除")
+                Text(text = "记录不存在或已删除")
             } else {
                 val summary = session.summary
                 Spacer(modifier = Modifier.height(8.dp))
@@ -261,48 +296,42 @@ fun SessionDetailScreen(
                     text = "共 ${summary.total} · 成功 ${summary.success} · 失败 ${summary.failed} · 取消 ${summary.cancelled}",
                 )
                 Text(text = "目录: /${summary.remoteDir}")
-                Text(
-                    text = "此清单完整保存，不受历史上限影响。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("搜索本批次") },
+                    label = { Text("搜索本任务文件") },
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
-                        selected = filter == SessionFilter.ALL,
-                        onClick = { filter = SessionFilter.ALL },
+                        selected = filter == RecordFilter.ALL,
+                        onClick = { filter = RecordFilter.ALL },
                         label = { Text("全部") },
                     )
                     FilterChip(
-                        selected = filter == SessionFilter.SUCCESS,
-                        onClick = { filter = SessionFilter.SUCCESS },
+                        selected = filter == RecordFilter.SUCCESS,
+                        onClick = { filter = RecordFilter.SUCCESS },
                         label = { Text("成功") },
                     )
                     FilterChip(
-                        selected = filter == SessionFilter.FAILED,
-                        onClick = { filter = SessionFilter.FAILED },
+                        selected = filter == RecordFilter.FAILED,
+                        onClick = { filter = RecordFilter.FAILED },
                         label = { Text("失败") },
                     )
                     FilterChip(
-                        selected = filter == SessionFilter.CANCELLED,
-                        onClick = { filter = SessionFilter.CANCELLED },
+                        selected = filter == RecordFilter.CANCELLED,
+                        onClick = { filter = RecordFilter.CANCELLED },
                         label = { Text("取消") },
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "显示 ${filtered.size}/${records.size}",
+                    text = "显示 ${filtered.size}/${records.size} · 点击条目展开详情",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyColumn(
@@ -311,10 +340,10 @@ fun SessionDetailScreen(
                 ) {
                     items(
                         items = filtered,
-                        key = { record -> record.id },
+                        key = { it.id },
                     ) { record ->
                         val expanded = record.id in expandedIds
-                        SessionRecordCard(
+                        RecordRowCard(
                             record = record,
                             expanded = expanded,
                             onToggle = {
@@ -326,17 +355,34 @@ fun SessionDetailScreen(
                             },
                         )
                     }
-                    item {
-                        Spacer(modifier = Modifier.height(24.dp))
-                    }
+                    item { Spacer(modifier = Modifier.height(24.dp)) }
                 }
             }
         }
     }
+
+    if (confirmDelete && session != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除这个任务？") },
+            text = { Text("将删除该任务全部 ${session.summary.total} 条结果，不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteSession(session.summary.id)
+                        confirmDelete = false
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
+    }
 }
 
 @Composable
-private fun SessionRecordCard(
+private fun RecordRowCard(
     record: UploadHistoryRecord,
     expanded: Boolean,
     onToggle: () -> Unit,
@@ -353,9 +399,7 @@ private fun SessionRecordCard(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-        ) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -370,9 +414,11 @@ private fun SessionRecordCard(
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        text = "${statusLabel(record.status)} · ${formatSizeLocal(record.fileSize)}",
+                        text = "${statusLabel(record.status)} · ${formatSizeLocal(record.fileSize)} · ${formatTime(record.finishedAt)}",
                         color = statusColor,
                         style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Icon(
@@ -381,11 +427,10 @@ private fun SessionRecordCard(
                 )
             }
             AnimatedVisibility(visible = expanded) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(text = "远端: ${record.remotePath.ifBlank { "-" }}")
-                    Text(text = "时间: ${formatTime(record.finishedAt)}")
+                    Text(text = "服务器: ${record.baseUrl.ifBlank { "-" }}")
+                    Text(text = "耗时: ${formatDuration(record.durationMs)}")
                     if (record.message.isNotBlank()) {
                         Text(text = "备注: ${record.message}")
                     }
@@ -404,6 +449,19 @@ private fun statusLabel(status: UploadHistoryStatus): String = when (status) {
 private fun formatTime(epochMs: Long): String {
     if (epochMs <= 0L) return "-"
     return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(epochMs))
+}
+
+private fun formatDuration(ms: Long): String {
+    if (ms <= 0L) return "0s"
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return when {
+        h > 0 -> "${h}h ${m}m ${s}s"
+        m > 0 -> "${m}m ${s}s"
+        else -> "${s}s"
+    }
 }
 
 private fun formatSizeLocal(bytes: Long): String {

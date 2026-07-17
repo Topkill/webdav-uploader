@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.webdav.uploader.data.HistoryRepository
 import com.webdav.uploader.data.WebDavConfig
 import com.webdav.uploader.keepalive.KeepAliveStatus
 
@@ -38,12 +37,10 @@ import com.webdav.uploader.keepalive.KeepAliveStatus
 @Composable
 fun SettingsScreen(
     draft: WebDavConfig,
-    historyMaxDraft: Int,
     settingsMessage: String?,
     probeMessage: String?,
     keepAliveStatus: KeepAliveStatus,
     onDraftChange: ((WebDavConfig) -> WebDavConfig) -> Unit,
-    onHistoryMaxChange: (Int) -> Unit,
     onSave: () -> Unit,
     onProbe: () -> Unit,
     onApplyKeepAlive: () -> Unit,
@@ -72,7 +69,7 @@ fun SettingsScreen(
         ) {
             Text("连接配置", style = MaterialTheme.typography.titleMedium)
             Text(
-                "以下配置会保存到本地，重启后仍然有效。上传使用已保存配置。",
+                "保存后本地持久化，重启仍然有效。上传使用已保存配置。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -136,25 +133,6 @@ fun SettingsScreen(
                 onChange = { v -> onDraftChange { it.copy(callTimeoutSec = v) } },
             )
 
-            Text("历史上限", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "范围 ${HistoryRepository.MIN_MAX_ITEMS}–${HistoryRepository.MAX_MAX_ITEMS}，超出自动丢弃最旧记录。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = historyMaxDraft.toString(),
-                onValueChange = { text ->
-                    val n = text.filter { it.isDigit() }.toIntOrNull()
-                        ?: HistoryRepository.MIN_MAX_ITEMS
-                    onHistoryMaxChange(n)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("上传历史上限条数") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-
             Text("保活设置", style = MaterialTheme.typography.titleMedium)
             Text(
                 "可只开一项，也可全部开启。长传/锁屏时建议至少打开「前台通知」+「电池优化白名单」。",
@@ -199,15 +177,11 @@ fun SettingsScreen(
                 OutlinedButton(
                     onClick = onApplyKeepAlive,
                     modifier = Modifier.weight(1f),
-                ) {
-                    Text("应用已勾选保活")
-                }
+                ) { Text("应用已勾选保活") }
                 OutlinedButton(
                     onClick = onRequestNotificationPermission,
                     modifier = Modifier.weight(1f),
-                ) {
-                    Text("申请通知权限")
-                }
+                ) { Text("申请通知权限") }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

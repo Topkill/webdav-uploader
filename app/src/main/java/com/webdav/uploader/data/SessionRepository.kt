@@ -13,10 +13,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-/**
- * 批次/会话结果：一次上传任务的完整成功/失败清单。
- * 不受「历史上限」截断，单独落盘到 files/sessions/。
- */
+/** 一次上传任务的摘要 */
 data class UploadSessionSummary(
     val id: String,
     val startedAt: Long,
@@ -29,6 +26,7 @@ data class UploadSessionSummary(
     val baseUrl: String,
 )
 
+/** 一次上传任务的完整结果（无条数/批次数上限，用户可删） */
 data class UploadSession(
     val summary: UploadSessionSummary,
     val records: List<UploadHistoryRecord>,
@@ -41,11 +39,6 @@ class SessionRepository(context: Context) {
 
     private val _sessions = MutableStateFlow<List<UploadSessionSummary>>(emptyList())
     val sessions: StateFlow<List<UploadSessionSummary>> = _sessions.asStateFlow()
-
-    companion object {
-        /** 最多保留多少个完整批次（不是条数上限） */
-        const val MAX_SESSIONS = 30
-    }
 
     init {
         _sessions.value = readIndex()
@@ -74,9 +67,9 @@ class SessionRepository(context: Context) {
                 baseUrl = baseUrl,
             )
             writeSession(UploadSession(summary, emptyList()))
-            val index = (listOf(summary) + readIndex()).take(MAX_SESSIONS)
+            // 新任务插到最前，不截断
+            val index = listOf(summary) + readIndex().filterNot { it.id == id }
             writeIndex(index)
-            pruneOldSessions(index.map { it.id }.toSet())
             _sessions.value = index
             id
         }
@@ -220,7 +213,10 @@ class SessionRepository(context: Context) {
                             message = o.optString("message"),
                             startedAt = started,
                             finishedAt = finished,
-                            durationMs = o.optLong("durationMs", (finished - started).coerceAtLeast(0)),
+                            durationMs = o.optLong(
+                                "durationMs",
+                                (finished - started).coerceAtLeast(0),
+                            ),
                         ),
                     )
                 }
@@ -263,14 +259,5 @@ class SessionRepository(context: Context) {
             )
             .put("records", recordsArr)
         sessionFile(s.id).writeText(root.toString())
-    }
-
-    private fun pruneOldSessions(keepIds: Set<String>) {
-        dir.listFiles()
-            ?.filter { it.name.endsWith(".json") && it.name != "index.json" }
-            ?.forEach { f ->
-                val id = f.name.removeSuffix(".json")
-                if (id !in keepIds) f.delete()
-            }
     }
 }

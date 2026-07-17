@@ -23,12 +23,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.webdav.uploader.keepalive.KeepAliveHelper
 import com.webdav.uploader.ui.AppScreen
-import com.webdav.uploader.ui.HistoryScreen
 import com.webdav.uploader.ui.MainScreen
 import com.webdav.uploader.ui.MainViewModel
-import com.webdav.uploader.ui.SessionDetailScreen
-import com.webdav.uploader.ui.SessionsScreen
 import com.webdav.uploader.ui.SettingsScreen
+import com.webdav.uploader.ui.UploadRecordDetailScreen
+import com.webdav.uploader.ui.UploadRecordsScreen
 import com.webdav.uploader.upload.UploadService
 
 class MainActivity : ComponentActivity() {
@@ -51,12 +50,8 @@ class MainActivity : ComponentActivity() {
             val config by vm.config.collectAsStateWithLifecycle()
             val upload by UploadService.state.collectAsStateWithLifecycle()
             val settingsDraft by vm.settingsDraft.collectAsStateWithLifecycle()
-            val historyMaxDraft by vm.historyMaxDraft.collectAsStateWithLifecycle()
             val settingsMessage by vm.settingsMessage.collectAsStateWithLifecycle()
             val probeMsg by vm.probeMessage.collectAsStateWithLifecycle()
-            val history by vm.history.collectAsStateWithLifecycle()
-            val historyMax by vm.historyMaxItems.collectAsStateWithLifecycle()
-            val historyMsg by vm.historyMessage.collectAsStateWithLifecycle()
             val keepAliveStatus by vm.keepAliveStatus.collectAsStateWithLifecycle()
             val sessions by vm.sessions.collectAsStateWithLifecycle()
             val sessionDetail by vm.sessionDetail.collectAsStateWithLifecycle()
@@ -65,14 +60,13 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.OpenMultipleDocuments(),
             ) { uris: List<Uri> ->
                 if (uris.isNotEmpty()) {
-                    // 完整列表放进程内队列，不再依赖 ClipData 前 500
                     UploadService.start(this, uris)
                 }
             }
 
             BackHandler(enabled = screen !is AppScreen.Home) {
                 when (screen) {
-                    is AppScreen.SessionDetail -> vm.navigate(AppScreen.Sessions)
+                    is AppScreen.UploadRecordDetail -> vm.navigate(AppScreen.UploadRecords)
                     else -> vm.navigate(AppScreen.Home)
                 }
             }
@@ -86,17 +80,14 @@ class MainActivity : ComponentActivity() {
                             onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
                             onCancel = { UploadService.stop(this) },
                             onOpenSettings = { vm.navigate(AppScreen.Settings) },
-                            onOpenHistory = { vm.navigate(AppScreen.History) },
-                            onOpenSessions = { vm.navigate(AppScreen.Sessions) },
+                            onOpenRecords = { vm.navigate(AppScreen.UploadRecords) },
                         )
                         AppScreen.Settings -> SettingsScreen(
                             draft = settingsDraft,
-                            historyMaxDraft = historyMaxDraft,
                             settingsMessage = settingsMessage,
                             probeMessage = probeMsg,
                             keepAliveStatus = keepAliveStatus,
                             onDraftChange = vm::updateSettingsDraft,
-                            onHistoryMaxChange = vm::updateHistoryMaxDraft,
                             onSave = vm::saveSettings,
                             onProbe = vm::probe,
                             onApplyKeepAlive = {
@@ -112,25 +103,16 @@ class MainActivity : ComponentActivity() {
                             },
                             onBack = { vm.navigate(AppScreen.Home) },
                         )
-                        AppScreen.History -> HistoryScreen(
-                            history = history,
-                            historyMaxItems = historyMax,
-                            historyMessage = historyMsg,
-                            onDelete = vm::deleteHistory,
-                            onDeleteIds = vm::deleteHistoryIds,
-                            onClear = vm::clearHistory,
-                            onBack = { vm.navigate(AppScreen.Home) },
-                        )
-                        AppScreen.Sessions -> SessionsScreen(
+                        AppScreen.UploadRecords -> UploadRecordsScreen(
                             sessions = sessions,
-                            onOpen = { id -> vm.navigate(AppScreen.SessionDetail(id)) },
+                            onOpen = { id -> vm.navigate(AppScreen.UploadRecordDetail(id)) },
                             onDelete = vm::deleteSession,
                             onClear = vm::clearSessions,
                             onBack = { vm.navigate(AppScreen.Home) },
                         )
-                        is AppScreen.SessionDetail -> SessionDetailScreen(
+                        is AppScreen.UploadRecordDetail -> UploadRecordDetailScreen(
                             session = sessionDetail,
-                            onBack = { vm.navigate(AppScreen.Sessions) },
+                            onBack = { vm.navigate(AppScreen.UploadRecords) },
                             onDeleteSession = vm::deleteSession,
                         )
                     }

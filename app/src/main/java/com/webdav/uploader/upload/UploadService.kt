@@ -17,7 +17,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.webdav.uploader.MainActivity
 import com.webdav.uploader.R
-import com.webdav.uploader.data.HistoryRepository
 import com.webdav.uploader.data.SessionRepository
 import com.webdav.uploader.data.SettingsRepository
 import com.webdav.uploader.data.UploadHistoryRecord
@@ -124,8 +123,7 @@ class UploadService : Service() {
         job = scope.launch {
             queueMutex.withLock {
                 val settings = SettingsRepository(applicationContext)
-                val historyRepo = HistoryRepository(applicationContext)
-                val sessionRepo = SessionRepository(applicationContext)
+                                val sessionRepo = SessionRepository(applicationContext)
                 val config = preloadedConfig ?: settings.configFlow.first()
                 useForeground = config.keepAliveForegroundNotification
 
@@ -154,8 +152,8 @@ class UploadService : Service() {
                     appendLine("开始上传 $totalCount 个文件")
                     appendLine("远端目录: /$remoteDir")
                     appendLine("读超时: ${config.readTimeoutSec}s")
-                    appendLine("批次ID: $sessionId")
-                    appendLine("完整结果写入「批次结果」，不受历史上限截断")
+                    appendLine("任务ID: $sessionId")
+                    appendLine("完整结果写入「上传记录」")
                     if (totalCount >= 500) {
                         appendLine("大批量：进程内队列 + 串行上传")
                     }
@@ -192,7 +190,6 @@ class UploadService : Service() {
                         // 批次完整记录
                         sessionRepo.appendRecord(sessionId, record)
                         // 全局历史仍写（可能被上限截断）
-                        historyRepo.add(record)
                         log = appendLog(log, "跳过无法读取: ${record.fileName}")
                         _state.value = _state.value.copy(
                             log = log,
@@ -285,7 +282,6 @@ class UploadService : Service() {
                                 finishedAt = finishedAt,
                             )
                             sessionRepo.appendRecord(sessionId, record)
-                            historyRepo.add(record)
                             _state.value = _state.value.copy(
                                 phase = "成功",
                                 log = log,
@@ -305,7 +301,6 @@ class UploadService : Service() {
                                 finishedAt = finishedAt,
                             )
                             sessionRepo.appendRecord(sessionId, record)
-                            historyRepo.add(record)
                             _state.value = _state.value.copy(
                                 phase = "失败",
                                 log = log,
@@ -328,7 +323,6 @@ class UploadService : Service() {
                             finishedAt = finishedAt,
                         )
                         sessionRepo.appendRecord(sessionId, record)
-                        historyRepo.add(record)
                         sessionRepo.finishSession(sessionId)
                         throw e
                     }
